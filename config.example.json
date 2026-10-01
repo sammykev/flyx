@@ -5,5 +5,5 @@
     "password": "admin",
     "loginMode": "base64"
   },
-  "pollSeconds": 15
+  "pollSeconds": 10
 }

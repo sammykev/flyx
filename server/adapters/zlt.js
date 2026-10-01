@@ -93,8 +93,11 @@ export function createZlt({ host, password }) {
     const set = r.headers.getSetCookie();
     if (set.length) cookie = set.map((c) => c.split(";")[0]).join("; ");
     const text = await r.text();
-    try { return JSON.parse(text); }
-    catch { throw new Error(`router returned non-JSON (HTTP ${r.status}): ${text.slice(0, 120)}`); }
+    if (!text.trim()) return { empty: true };
+    try { return JSON.parse(text); } catch {}
+    const t = text.replace(/[\u0000-\u001f]+/g, " ").trim();
+    for (const cand of [t, t.slice(0, t.lastIndexOf("}") + 1)]) { try { return JSON.parse(cand); } catch {} }
+    throw new Error(`router returned non-JSON (HTTP ${r.status}): ${text.slice(0, 120)}`);
   }
 
   // Exactly one rejected login is allowed per run, so a wrong password or a
@@ -123,55 +126,102 @@ export function createZlt({ host, password }) {
     return res;
   }
 
-  // ---- data mapping (provisional until checked against real responses) ----
-  const CMDS = { home: 402, network: 218, flow: 337, flowN: 355, devices: 223 };
-  const pick = (flat, ...res) => {
-    for (const re of res) for (const [k, v] of Object.entries(flat)) if (re.test(k) && v !== "" && v != null) return v;
-    return null;
-  };
-
-  async function readAll() {
-    const raw = {};
-    for (const [name, cmd] of Object.entries(CMDS)) raw[name] = await call(cmd).catch((e) => ({ error: e.message }));
-    return raw;
+  // ---- data mapping (field names confirmed from real X17U responses) ----
+  const MB = 1024 ** 2, GB = 1024 ** 3;
+  const TTL = { 205: 60e3, 207: 60e3 }; // slow-changing; everything else is read each poll
+  const memo = {}; let last = null;
+  async function cached(cmd) {
+    const m = memo[cmd];
+    if (m && Date.now() - m.t < (TTL[cmd] ?? 0)) return m.v;
+    const v = await call(cmd).catch((e) => ({ error: e.message }));
+    memo[cmd] = { t: Date.now(), v };
+    return v;
   }
+  const secs = (dur) => { // "1-13-10-18" = days-hours-minutes-seconds
+    const p = String(dur || "").split("-").map(Number);
+    return p.length === 4 && p.every((x) => !isNaN(x)) ? p[0] * 86400 + p[1] * 3600 + p[2] * 60 + p[3] : null;
+  };
 
   return {
     name: "zlt",
     call: async (cmd, extra) => redact(await call(cmd, extra)),
 
     async getStatus() {
-      const raw = await readAll();
-      if (Object.values(raw).every((r) => r.error)) throw new Error(Object.values(raw)[0].error);
-      const f = flatten(raw);
-      const net = pick(f, /network_?type|net_?type|nettype|rat\b/i, /mode/i);
+      const w = await cached(133);                 // WAN, signal, counters
+      if (w.error) throw new Error(w.error);
+      const n = await cached(113), p = await cached(337), c = await cached(1005);
+      const d = await cached(205), sys = await cached(207);
+
+      const nr = /5g/i.test(n.network_type_str || "");
+      const sig = (lte, nr5) => num(nr && w[nr5] !== "" && w[nr5] != null ? w[nr5] : w[lte]);
+
+      // live speed from the change in the router's WAN byte counters
+      const rx = num(w.wan_rx_bytes) ?? 0, tx = num(w.wan_tx_bytes) ?? 0, now = Date.now();
+      let rxRate = 0, txRate = 0;
+      if (last && now > last.t) {
+        const dt = (now - last.t) / 1000;
+        rxRate = Math.max(0, (rx - last.rx) / dt); txRate = Math.max(0, (tx - last.tx) / dt);
+      }
+      last = { rx, tx, t: now };
+
+      // the router keeps its own monthly counter and plan
+      const dl = num(p.dl_mon_flow), ul = num(p.ul_mon_flow);
+      const plan = dl == null && ul == null ? null : {
+        usedBytes: ((dl || 0) + (ul || 0)) * MB, dlBytes: (dl || 0) * MB, ulBytes: (ul || 0) * MB,
+        limitBytes: p.limitSwitch === "1" && num(p.limitSize) ? num(p.limitSize) * (p.flow_limit_unit === "1" ? GB : MB) : null,
+        resetDay: num(p.startDate) || 1,
+      };
+
+      const details = [];
+      const add = (k, v) => { if (v !== "" && v != null && v !== "undefined") details.push([k, String(v)]); };
+      add("5G band", w.currentband_5g && `n${w.currentband_5g}`);
+      add("4G bands", w.currentband && "B" + w.currentband.split("+").join(" + B"));
+      add("5G RSRP", w.RSRP_5G && `${w.RSRP_5G} dBm`); add("5G SINR", w.SINR_5G && `${w.SINR_5G} dB`);
+      add("5G RSRQ", w.RSRQ_5G && `${w.RSRQ_5G} dB`);
+      add("4G RSRP", w.RSRP && `${w.RSRP} dBm`); add("4G SINR", w.SINR && `${w.SINR} dB`);
+      add("4G RSRQ", w.RSRQ && `${w.RSRQ} dB`);
+      add("5G bandwidth", w.bandwidth_5g && `${w.bandwidth_5g} MHz`);
+      add("MIMO", d.mimo_status); add("APN", w.apn_name);
+      add("DNS", [w.wan_dns, w.wan_dns2].filter(Boolean).join(", "));
+      add("Mobile data", n.data_switch === "1" ? "On" : n.data_switch === "0" ? "Off" : "");
+      add("Roaming", n.roam_status === "1" ? "Yes" : n.roam_status === "0" ? "No" : "");
+      add("Temperature", sys.device_temperature && `${sys.device_temperature} °C`);
+      add("CPU load", sys.cpu_usage && `${sys.cpu_usage}%`);
+      add("Firmware", w.real_fwversion || sys.real_fwversion);
+      add("Unread SMS", c.sms_unread);
+
+      const clients = ["24gwifi_clients_num", "5gwifi_clients_num", "eth_clients_num"].reduce((a, k) => a + (num(c[k]) || 0), 0);
       return {
-        online: true,
-        networkType: net != null ? String(net) : "—",
-        operator: pick(f, /operator|provider|plmn|isp/i) ?? "—",
-        band: pick(f, /band/i) ?? "—",
-        signalBars: num(pick(f, /signal_?bar|signal_?level|signal$|bars?$/i)),
-        rsrp: num(pick(f, /rsrp/i)), rsrq: num(pick(f, /rsrq/i)), sinr: num(pick(f, /sinr|snr/i)),
-        wanIp: pick(f, /wan.*ip|ipv4|ip_?addr/i) ?? "—",
-        sessionRx: num(pick(f, /(rx|down|download).*(byte|flow|total)|(byte|flow|total).*(rx|down)/i)) ?? 0,
-        sessionTx: num(pick(f, /(tx|up|upload).*(byte|flow|total)|(byte|flow|total).*(tx|up)/i)) ?? 0,
-        rxRate: num(pick(f, /(rx|down).*(rate|speed|thrpt)|(rate|speed).*(rx|down)/i)) ?? 0,
-        txRate: num(pick(f, /(tx|up).*(rate|speed|thrpt)|(rate|speed).*(tx|up)/i)) ?? 0,
-        uptime: num(pick(f, /uptime|runtime|run_?time|online_?time/i)) ?? 0,
-        clients: num(pick(f, /(client|sta|device|user).*(num|count)|(num|count).*(client|sta|device|user)/i)),
-        wifi: { ssid24: pick(f, /ssid.*(2|24)|2g.*ssid/i) || "", ssid5: pick(f, /ssid.*5|5g.*ssid/i) || "" },
-        model: pick(f, /model|product|device_?name/i) || "ZLT X17U",
+        online: n.network_status === "1" || !!w.wan_ip,
+        networkType: n.network_type_str || "—",
+        operator: n.network_operator || "—",
+        band: nr ? `n${w.currentband_5g}` : w.currentband ? `B${w.currentband.split("+")[0]}` : "—",
+        signalBars: num(n.signal_lvl),
+        rsrp: sig("RSRP", "RSRP_5G"), rsrq: sig("RSRQ", "RSRQ_5G"), sinr: sig("SINR", "SINR_5G"),
+        wanIp: w.wan_ip || "—",
+        sessionRx: rx, sessionTx: tx, rxRate, txRate,
+        uptime: num(w.uptime) ?? num(sys.uptime) ?? 0,
+        connectedFor: secs(d.onlineDuration || sys.online_duration),
+        clients, plan, details,
+        model: w.real_device || sys.real_device || "ZLT X17U",
       };
     },
 
     async getDevices() {
-      const res = await call(CMDS.devices);
-      const list = Object.values(res).find((v) => Array.isArray(v) && v.length && typeof v[0] === "object") || [];
-      const g = (d, re) => { const k = Object.keys(d).find((x) => re.test(x)); return k ? d[k] : ""; };
-      return list.map((d) => ({
-        name: g(d, /host|name/i) || "Unknown", ip: g(d, /^ip|ipaddr|ip_/i), mac: g(d, /mac/i),
-        type: /lan|eth|wired/i.test(JSON.stringify(g(d, /type|conn|interface/i))) ? "lan" : "wifi",
-      }));
+      const a = await call(223);
+      const wifi = {};
+      for (const [cmd, key, band] of [[225, "wlan5g_wifi_info", "5 GHz"], [224, "wlan24g_wifi_info", "2.4 GHz"]]) {
+        const r = await call(cmd).catch(() => ({}));
+        for (const x of Array.isArray(r[key]) ? r[key] : []) wifi[String(x.mac).toLowerCase()] = { ...x, band };
+      }
+      return (a.dhcp_list_info || []).map((d) => {
+        const w = wifi[String(d.mac).toLowerCase()];
+        return {
+          name: d.hostname || "Unknown", ip: d.ip || "", mac: (d.mac || "").toUpperCase(),
+          type: d.interface === "wlan" ? "wifi" : "lan",
+          note: w ? [w.ssid, w.band, w.rssi && `${w.rssi} dBm`].filter(Boolean).join(" · ") : "",
+        };
+      });
     },
 
     // Read-only GET commands; one login, then all responses (secrets hidden).

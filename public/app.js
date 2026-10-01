@@ -19,12 +19,14 @@ const dur = (s) => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 /
 // billing cycle helpers
 function cycle() {
   const now = new Date(), y = now.getFullYear(), m = now.getMonth();
-  const start = new Date(y, now.getDate() >= plan.resetDay ? m : m - 1, plan.resetDay);
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, plan.resetDay);
+  const at = (yy, mm) => new Date(yy, mm, Math.min(plan.resetDay, new Date(yy, mm + 1, 0).getDate()));
+  let start = at(y, m); if (start > now) start = at(y, m - 1);
+  const end = at(start.getFullYear(), start.getMonth() + 1);
   return { start, end, daysLeft: Math.ceil((end - now) / 864e5) };
 }
 const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 function cycleUsed() {
+  if (state.status?.plan) return state.status.plan.usedBytes; // the router's own monthly counter
   const { start } = cycle(), s = key(start);
   return state.days.filter((d) => d.date >= s).reduce((a, d) => a + d.rx + d.tx, 0);
 }
@@ -37,6 +39,12 @@ function render() {
   $("connText").textContent = s.online ? "Online" : "Offline";
   $("model").textContent = s.model;
 
+  const P = s.plan;
+  if (P) {
+    plan.resetDay = P.resetDay;
+    if (P.limitBytes) plan.gb = Math.round(P.limitBytes / 1024 ** 3 * 10) / 10;
+    $("planGb").value = plan.gb; $("resetDay").value = plan.resetDay;
+  }
   const used = cycleUsed(), cap = plan.gb * 1024 ** 3, pct = Math.min(used / cap, 1);
   $("usedBig").textContent = fmt(used);
   $("usedOf").textContent = `of ${plan.gb} GB plan`;
@@ -52,14 +60,14 @@ function render() {
   $("bars").textContent = s.signalBars != null ? "▂▄▆█".slice(0, Math.max(1, Math.min(4, s.signalBars))) + ` ${s.signalBars}/5` : "—";
   $("rsrpSmall").textContent = s.rsrp != null ? `RSRP ${s.rsrp} dBm · SINR ${s.sinr ?? "—"} dB` : "";
 
-  $("sRx").textContent = fmt(s.sessionRx); $("sTx").textContent = fmt(s.sessionTx);
-  const row = (k, v) => `<div class="row"><span>${k}</span><span class="v">${esc(v ?? "—")}</span></div>`;
+  $("sRx").textContent = fmt(P ? P.dlBytes : s.sessionRx); $("sTx").textContent = fmt(P ? P.ulBytes : s.sessionTx);
+  const row = (k, v) => `<div class="row"><span>${k}</span><span class="v">${esc(v)}</span></div>`;
   $("netList").innerHTML = "<h3>Connection</h3>" + [
     ["Status", s.online ? "Connected" : "Disconnected"], ["Operator", s.operator], ["Network type", s.networkType],
-    ["Band", s.band], ["RSRP", s.rsrp != null ? s.rsrp + " dBm" : null], ["RSRQ", s.rsrq != null ? s.rsrq + " dB" : null],
-    ["SINR", s.sinr != null ? s.sinr + " dB" : null], ["WAN IP", s.wanIp], ["Connected for", dur(s.uptime)],
-    ["Wi-Fi 2.4 GHz", s.wifi?.ssid24], ["Wi-Fi 5 GHz", s.wifi?.ssid5], ["Clients", s.clients],
-  ].map(([k, v]) => row(k, v)).join("");
+    ["Band", s.band], ["WAN IP", s.wanIp],
+    ["Connected for", s.connectedFor != null ? dur(s.connectedFor) : null], ["Router uptime", dur(s.uptime)],
+    ["Clients", s.clients], ...(s.details || []),
+  ].filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => row(k, v)).join("");
 }
 
 function renderUsage() {
@@ -78,7 +86,7 @@ async function loadDevices() {
   try {
     const { devices } = await (await fetch("/api/devices")).json();
     $("devList").innerHTML = devices.length ? `<h3>${devices.length} connected</h3>` + devices.map((d) =>
-      `<div class="row dev"><div><b>${esc(d.name)}</b><small>${esc(d.ip)} · ${esc(d.mac)}</small></div><span class="tag">${d.type === "lan" ? "Ethernet" : "Wi-Fi"}</span></div>`).join("")
+      `<div class="row dev"><div><b>${esc(d.name)}</b><small>${esc(d.ip)} · ${esc(d.mac)}${d.note ? " · " + esc(d.note) : ""}</small></div><span class="tag">${d.type === "lan" ? "Ethernet" : "Wi-Fi"}</span></div>`).join("")
       : '<p class="empty">No devices found</p>';
   } catch { $("devList").innerHTML = '<p class="empty">Could not load devices</p>'; }
 }
