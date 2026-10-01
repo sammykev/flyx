@@ -47,6 +47,12 @@ http.createServer(async (req, res) => {
     if (url.pathname === "/api/diagnose") return json(res, 200, await router.diagnose());
     if (url.pathname === "/api/discover") return json(res, 200, await router.discover());
     if (url.pathname === "/api/snippets") return json(res, 200, await router.snippets(url.searchParams.get("q") || "http.cgi", +url.searchParams.get("ctx") || 600, +url.searchParams.get("max") || 6));
+    if (url.pathname === "/api/apimap") {
+      const terms = ["/status/home", "/status/wanInfo", "/connect/info", "/status/deviceInfo", "/status/DHCPInfo", "password", "sessionId", "\"/login", "logIn", "cmd:233"];
+      const map = {};
+      for (const t of terms) map[t] = (await router.snippets(t, 350, 3)).snippets.map((x) => x.code);
+      return json(res, 200, map);
+    }
     if (url.pathname === "/api/raw" && router.raw)
       return json(res, 200, await router.raw((url.searchParams.get("cmd") || "").split(",")));
 
