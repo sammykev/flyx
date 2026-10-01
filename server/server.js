@@ -45,20 +45,10 @@ http.createServer(async (req, res) => {
   try {
     if (url.pathname === "/api/status") return json(res, 200, { status, error, updated });
     if (url.pathname === "/api/usage") return json(res, 200, { days: getDays(+url.searchParams.get("days") || 30) });
+    if (url.pathname === "/api/probe") return json(res, 200, await router.probe());
+    if (url.pathname === "/api/call") return json(res, 200, await router.call(+url.searchParams.get("cmd")));
+    if (url.pathname === "/api/snippets") return json(res, 200, await router.snippets(url.searchParams.get("q") || "", +url.searchParams.get("ctx") || 600, +url.searchParams.get("max") || 6, url.searchParams.get("file") || "app.js"));
     if (url.pathname === "/api/devices") return json(res, 200, { devices: await router.getDevices() });
-    if (url.pathname === "/api/diagnose") return json(res, 200, await router.diagnose());
-    if (url.pathname === "/api/discover") return json(res, 200, await router.discover());
-    if (url.pathname === "/api/snippets") return json(res, 200, await router.snippets(url.searchParams.get("q") || "http.cgi", +url.searchParams.get("ctx") || 600, +url.searchParams.get("max") || 6));
-    if (url.pathname === "/api/apimap") {
-      const terms = ["/status/home", "/status/wanInfo", "/connect/info", "/status/deviceInfo", "/status/DHCPInfo", "password", "sessionId", "\"/login", "logIn", "cmd:233"];
-      const map = {};
-      for (const t of terms) map[t] = (await router.snippets(t, 350, 3)).snippets.map((x) => x.code);
-      return json(res, 200, map);
-    }
-    if (url.pathname === "/api/cmds") return json(res, 200, await router.cmds());
-    if (url.pathname === "/api/apicalls") return json(res, 200, await router.apicalls());
-    if (url.pathname === "/api/raw" && router.raw)
-      return json(res, 200, await router.raw((url.searchParams.get("cmd") || "").split(",")));
 
     let file = path.normalize(path.join(pub, url.pathname === "/" ? "index.html" : url.pathname));
     if (!file.startsWith(pub) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {

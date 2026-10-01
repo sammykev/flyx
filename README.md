@@ -12,7 +12,9 @@ npm start                            # http://<this-machine>:8080
 ```
 On iPhone (same Wi-Fi): open the URL in Safari → Share → **Add to Home Screen**.
 
-## Router API caveat
-`server/adapters/zlt.js` uses the common ZTE/ZLT `goform` API. It is not yet verified against a real X17U. If fields are blank, open `http://<server>:8080/api/raw?cmd=network_type,signalbar` to test commands, and adjust `FIELDS` / `loginMode` (`base64`, `plain`, `none`). If your firmware needs a different login, edit `login()`.
+## Router API
+The X17U web UI talks to `POST /cgi-bin/http.cgi` with JSON like `{cmd, method, sessionId}`. Login is `sha256(token + password)` (token from cmd 232, login is cmd 100). `server/adapters/zlt.js` implements this. Flyx makes at most **one** login attempt per run, so a wrong password can never trigger the router's lockout.
+
+Field mapping for signal/usage/devices is matched by name and is still being verified against real responses. To inspect them, open `http://<server>:8080/api/probe` (read-only commands, passwords hidden) or `/api/call?cmd=402`.
 
 Usage is tallied by the server from router byte counters, so it only counts traffic while the server is running.

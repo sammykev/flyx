@@ -1,5 +1,6 @@
 import http from "node:http";
 import zlib from "node:zlib";
+import { createHash } from "node:crypto";
 
 // Lenient fetch-like client. Node's built-in fetch (undici) crashes on this router's
 // non-standard HTTP replies, so use node:http with the tolerant parser instead.
@@ -58,221 +59,135 @@ const FIELDS = [
   "realtime_time", "sta_count", "SSID1", "SSID2", "hardware_version", "wa_inner_version",
 ];
 
-const TIMEOUT = 8000;
-const num = (v) => (v === undefined || v === "" || isNaN(+v) ? null : +v);
 
-export function createZlt({ host, password, loginMode = "base64" }) {
+// MTN ZLT X17U web API: every call is a JSON POST to /cgi-bin/http.cgi like
+// {cmd: <number>, method: "GET"|"POST", sessionId, ...}. Login is
+// sha256(token + password) where the token comes from cmd 232.
+
+const SECRET = /pass|pwd|psk|secret|token|key/i;
+const redact = (v, k = "") =>
+  Array.isArray(v) ? v.map((x) => redact(x)) :
+  v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([a, b]) => [a, redact(b, a)])) :
+  SECRET.test(k) && v ? "<hidden>" : v;
+
+// flatten {a:{b:1}} -> {"a.b":1} so fields can be found by fuzzy key match
+function flatten(o, p = "", out = {}) {
+  if (o && typeof o === "object" && !Array.isArray(o)) for (const [k, v] of Object.entries(o)) flatten(v, p ? `${p}.${k}` : k, out);
+  else out[p] = o;
+  return out;
+}
+const num = (v) => (v === undefined || v === null || v === "" || isNaN(+v) ? null : +v);
+
+export function createZlt({ host, password }) {
   const base = `http://${host}`;
-  let cookie = "";
+  let cookie = "", sessionId = "", rejected = 0, loggingIn = null;
 
-  const headers = (extra = {}) => ({
-    Referer: `${base}/index.html`,
-    Origin: base,
-    ...(cookie ? { Cookie: cookie } : {}),
-    ...extra,
-  });
-
-  async function login() {
-    if (loginMode === "none") return;
-    const pw = loginMode === "base64" ? Buffer.from(password).toString("base64") : password;
-    const res = await nfetch(`${base}/goform/goform_set_cmd_process`, {
+  async function post(body) {
+    const r = await nfetch(`${base}/cgi-bin/http.cgi`, {
       method: "POST",
-      headers: headers({ "Content-Type": "application/x-www-form-urlencoded" }),
-      body: new URLSearchParams({ isTest: "false", goformId: "LOGIN", password: pw }),
-      signal: AbortSignal.timeout(TIMEOUT),
+      headers: { "Content-Type": "application/json", Referer: `${base}/`, Origin: base, ...(cookie ? { Cookie: cookie } : {}) },
+      body: JSON.stringify(body),
+    }).catch((e) => {
+      throw new Error(`cannot reach router at ${host} (${e.name === "TimeoutError" ? "timed out" : e.code || e.message})`);
     });
-    const set = res.headers.getSetCookie?.() ?? [];
+    const set = r.headers.getSetCookie();
     if (set.length) cookie = set.map((c) => c.split(";")[0]).join("; ");
-    const body = await res.json().catch(() => ({}));
-    if (body.result && body.result !== "0" && body.result !== "4") {
-      throw new Error(`router login failed (result=${body.result})`);
-    }
+    const text = await r.text();
+    try { return JSON.parse(text); }
+    catch { throw new Error(`router returned non-JSON (HTTP ${r.status}): ${text.slice(0, 120)}`); }
   }
 
-  async function get(cmds, { retry = true } = {}) {
-    const url = `${base}/goform/goform_get_cmd_process?isTest=false&multi_data=1&cmd=${cmds.join(",")}`;
-    const res = await nfetch(url, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT) }).catch((e) => {
-      throw new Error(`cannot reach router at ${host} (${e.name === "TimeoutError" ? "timed out" : e.cause?.code || e.message})`);
-    });
-    const text = await res.text();
-    let json;
-    try { json = JSON.parse(text); } catch { json = null; }
-    if ((!json || json.loginfo === "no") && retry) {
-      await login();
-      return get(cmds, { retry: false });
+  // Exactly one rejected login is allowed per run, so a wrong password or a
+  // protocol mismatch can never hammer the router into its lockout.
+  async function doLogin() {
+    if (rejected) throw new Error("login was rejected earlier; not retrying to avoid locking the router. Check the password in config.json, then restart Flyx.");
+    await post({ cmd: 104, method: "GET", sessionId: "" }).catch(() => {});
+    const lock = await post({ cmd: 232, method: "GET", sessionId: "" });
+    if (!lock.token) throw new Error(`router gave no login token: ${JSON.stringify(redact(lock)).slice(0, 200)}`);
+    const passwd = createHash("sha256").update(lock.token + password).digest("hex");
+    const r = await post({ sessionId: "", username: "admin", passwd, isAutoUpgrade: "1", method: "POST", cmd: 100, isCheckPasswd: "1" });
+    if (r.login_fail === "fail" || r.login_fail2 === "fail" || !r.sessionId) {
+      rejected = 1;
+      throw new Error(`router rejected the login: ${JSON.stringify(redact(r)).slice(0, 250)}`);
     }
-    if (!json) throw new Error(`router at ${host} did not return goform JSON (HTTP ${res.status}); check host/firmware`);
-    return json;
+    sessionId = r.sessionId;
+  }
+  const login = () => (loggingIn ||= doLogin().finally(() => { loggingIn = null; }));
+
+  async function call(cmd, extra = {}, retry = true) {
+    if (!sessionId) await login();
+    const res = await post({ cmd, method: "GET", sessionId, ...extra });
+    if ((res.message === "NO_AUTH" || res.message === "LOGIN_TIMEOUT") && retry) {
+      sessionId = ""; return call(cmd, extra, false);
+    }
+    return res;
   }
 
-  // Probe the router and report what it says, to debug login/field problems.
-  async function diagnose() {
-    const out = { host, steps: [] };
-    const step = async (name, fn) => {
-      try { out.steps.push({ name, ok: true, result: await fn() }); }
-      catch (e) { out.steps.push({ name, ok: false, error: e.message }); }
-    };
-    const t = (u, o = {}) => nfetch(base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
-    await step("open router home page", async () => {
-      const r = await t("/"); const b = await r.text();
-      return { http: r.status, title: (b.match(/<title>(.*?)<\/title>/is) || [])[1] || null, bytes: b.length };
-    });
-    await step("read status without login", async () => {
-      const r = await t("/goform/goform_get_cmd_process?isTest=false&multi_data=1&cmd=network_type,signalbar,loginfo", { headers: headers() });
-      return { http: r.status, body: (await r.text()).slice(0, 300) };
-    });
-    for (const mode of ["base64", "plain"]) {
-      await step(`login (${mode})`, async () => {
-        const pw = mode === "base64" ? Buffer.from(password).toString("base64") : password;
-        const r = await t("/goform/goform_set_cmd_process", {
-          method: "POST", headers: headers({ "Content-Type": "application/x-www-form-urlencoded" }),
-          body: new URLSearchParams({ isTest: "false", goformId: "LOGIN", password: pw }),
-        });
-        return { http: r.status, body: (await r.text()).slice(0, 300) };
-      });
-    }
-    return out;
-  }
+  // ---- data mapping (provisional until checked against real responses) ----
+  const CMDS = { home: 402, network: 218, flow: 337, flowN: 355, devices: 223 };
+  const pick = (flat, ...res) => {
+    for (const re of res) for (const [k, v] of Object.entries(flat)) if (re.test(k) && v !== "" && v != null) return v;
+    return null;
+  };
 
-  // Read the router's own web UI and list the API paths its scripts call.
-  async function discover() {
-    const t = async (u, o = {}) => {
-      const r = await nfetch(u.startsWith("http") ? u : base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
-      return { status: r.status, type: r.headers.get("content-type"), server: r.headers.get("server"), text: await r.text() };
-    };
-    const out = { host };
-    const home = await t("/");
-    out.home = { status: home.status, server: home.server, html: home.text.slice(0, 1500) };
-    const assets = [...home.text.matchAll(/(?:src|href)\s*=\s*["']([^"']+\.(?:js|json))["']/gi)].map((m) => m[1]);
-    out.assets = [];
-    const found = new Set();
-    for (const a of [...new Set(assets)].slice(0, 12)) {
-      try {
-        const url = a.startsWith("http") ? a : new URL(a, base + "/").href;
-        const r = await t(url);
-        out.assets.push({ url: a, status: r.status, bytes: r.text.length });
-        for (const m of r.text.matchAll(/["'`](\/?(?:cgi-bin|api|goform|ubus|rpc|jsonrpc|action|cmd|data|json|lua)[\w\-./?=&%]*)["'`]/gi)) found.add(m[1]);
-        for (const m of r.text.matchAll(/["'`](\/[\w\-./]*(?:login|status|info|usage|traffic|signal|device|client|session)[\w\-./?=&%]*)["'`]/gi)) found.add(m[1]);
-      } catch (e) { out.assets.push({ url: a, error: e.message }); }
-    }
-    out.apiPathsInScripts = [...found].slice(0, 80);
-    const probes = ["/ubus", "/cgi-bin/luci", "/cgi-bin/", "/api", "/api/status", "/cgi-bin/get_status", "/cgi-bin/status.cgi", "/goform/goform_get_cmd_process", "/jsonrpc", "/rpc", "/data.json", "/status.json", "/cgi-bin/api"];
-    out.probes = {};
-    for (const p of probes) {
-      try { const r = await t(p); out.probes[p] = `${r.status} ${r.type || ""} ${r.text.slice(0, 80).replace(/\s+/g, " ")}`; }
-      catch (e) { out.probes[p] = "error " + e.message; }
-    }
-    return out;
-  }
-
-  // Return code snippets from the router's JS around a search term.
-  async function snippets(q, ctx = 600, max = 6) {
-    const out = [];
-    for (const f of ["js/app.js"]) {
-      const r = await nfetch(`${base}/${f}`, { signal: AbortSignal.timeout(TIMEOUT) });
-      const text = await r.text();
-      let i = -1;
-      while (out.length < max && (i = text.indexOf(q, i + 1)) !== -1) {
-        out.push({ file: f, at: i, code: text.slice(Math.max(0, i - ctx), i + ctx) });
-        i += ctx;
-      }
-    }
-    return { q, count: out.length, snippets: out };
-  }
-
-  // Crawl the router's lazy-loaded page scripts and list their cmd values.
-  const PAGES = { "7b0cd930": "status/home", "05bb347a": "status/wanInfo", "118affda": "status/DHCPInfo",
-    "83c5cf2c": "status/wifi24Info", "7b0cb84c": "status/wifi5Info", "fadfabc6": "status/deviceInfo",
-    "5bb97221": "connect/info (device list)", "2677da51": "status/index" };
-  async function cmds() {
-    const get = async (f) => (await nfetch(`${base}/js/${f}`, { signal: AbortSignal.timeout(TIMEOUT) })).text();
-    const app = await get("app.js");
-    const ids = [...new Set([...app.matchAll(/chunk-([0-9a-f]{8})/g)].map((m) => m[1]))];
-    const out = { chunks: ids.length, files: {} };
-    const grab = (text, re, w, max) => {
-      const r = []; let m;
-      while (r.length < max && (m = re.exec(text))) r.push(text.slice(Math.max(0, m.index - w), m.index + m[0].length + w));
-      return r;
-    };
-    out.files["app.js"] = {
-      cmd: grab(app, /cmd["']?\s*:\s*[\w.]+/g, 90, 40),
-      password: grab(app, /password/gi, 160, 6),
-    };
-    for (const id of ids) {
-      let text; try { text = await get(`chunk-${id}.js`); } catch { continue; }
-      const c = grab(text, /cmd["']?\s*:\s*[\w.]+/g, 90, 25);
-      const pw = /password/i.test(text) ? grab(text, /password/gi, 160, 3) : [];
-      if (PAGES[id] || pw.length) out.files[PAGES[id] || `chunk-${id}`] = { cmd: c, password: pw };
-    }
-    return out;
-  }
-
-  // Compact list of every API call the web UI defines, plus the login code.
-  async function apicalls() {
-    const get = async (f) => (await nfetch(`${base}/js/${f}`)).text();
-    const app = await get("app.js");
-    const calls = [];
-    for (const m of app.matchAll(/(\w+)\(([^)]*)\)\{(?:var|let|const)\s+\w+=\{([^{}]*?cmd:\d+[^{}]*)\}/g)) {
-      calls.push(`${m[1]}(${m[2]}) -> {${m[3].replace(/sessionId:sessionStorage\.getItem\("sessionId"\)/, "sessionId")}}`);
-    }
-    for (const m of app.matchAll(/(\w+)\((\w*)\)\{return \w+\.cmd=(\d+),\w+\.method="(\w+)"/g)) {
-      calls.push(`${m[1]}(${m[2]}) -> cmd:${m[3]} ${m[4]} (adds fields to arg)`);
-    }
-    const ids = [...new Set([...app.matchAll(/chunk-([0-9a-f]{8})/g)].map((x) => x[1]))];
-    const login = { token: [], loginIndex: [], sessionId: [] };
-    for (const id of ids) {
-      let t; try { t = await get(`chunk-${id}.js`); } catch { continue; }
-      if (!/cmd:100\b/.test(t) || !/sha256/.test(t)) continue;
-      const grab = (re, w, max) => { const r = []; let m; while (r.length < max && (m = re.exec(t))) r.push(t.slice(Math.max(0, m.index - w), m.index + m[0].length + w)); return r; };
-      login.file = `chunk-${id}.js`;
-      login.token = grab(/token/g, 350, 6);
-      login.loginIndex = grab(/loginIndex/g, 700, 2);
-      login.sessionId = grab(/sessionId/g, 250, 4);
-    }
-    return { count: calls.length, calls, login };
+  async function readAll() {
+    const raw = {};
+    for (const [name, cmd] of Object.entries(CMDS)) raw[name] = await call(cmd).catch((e) => ({ error: e.message }));
+    return raw;
   }
 
   return {
     name: "zlt",
-    apicalls,
-    cmds,
-    snippets,
-    diagnose,
-    discover,
-    raw: (cmds) => get(cmds),
+    call: async (cmd, extra) => redact(await call(cmd, extra)),
+
     async getStatus() {
-      const r = await get(FIELDS);
-      const nr = r.network_type && /5g|nr/i.test(r.network_type);
+      const raw = await readAll();
+      if (Object.values(raw).every((r) => r.error)) throw new Error(Object.values(raw)[0].error);
+      const f = flatten(raw);
+      const net = pick(f, /network_?type|net_?type|nettype|rat\b/i, /mode/i);
       return {
-        online: /connected/i.test(r.ppp_status || r.wan_connect_status || "") || !!r.wan_ipaddr,
-        networkType: r.network_type || "—",
-        operator: r.network_provider || "—",
-        band: r.nr5g_action_band || r.wan_active_band || "—",
-        signalBars: num(r.signalbar),
-        rsrp: num(nr ? r.Z5g_rsrp || r.lte_rsrp : r.lte_rsrp || r.rsrp),
-        rsrq: num(nr ? r.Z5g_rsrq || r.lte_rsrq : r.lte_rsrq || r.rsrq),
-        sinr: num(r.Z5g_SINR || r.lte_snr),
-        wanIp: r.wan_ipaddr || "—",
-        sessionRx: num(r.realtime_rx_bytes) ?? 0,
-        sessionTx: num(r.realtime_tx_bytes) ?? 0,
-        rxRate: num(r.realtime_rx_thrpt) ?? 0,
-        txRate: num(r.realtime_tx_thrpt) ?? 0,
-        uptime: num(r.realtime_time) ?? 0,
-        clients: num(r.sta_count),
-        wifi: { ssid24: r.SSID1 || "", ssid5: r.SSID2 || "" },
-        model: r.hardware_version || "ZLT X17U",
+        online: true,
+        networkType: net != null ? String(net) : "—",
+        operator: pick(f, /operator|provider|plmn|isp/i) ?? "—",
+        band: pick(f, /band/i) ?? "—",
+        signalBars: num(pick(f, /signal_?bar|signal_?level|signal$|bars?$/i)),
+        rsrp: num(pick(f, /rsrp/i)), rsrq: num(pick(f, /rsrq/i)), sinr: num(pick(f, /sinr|snr/i)),
+        wanIp: pick(f, /wan.*ip|ipv4|ip_?addr/i) ?? "—",
+        sessionRx: num(pick(f, /(rx|down|download).*(byte|flow|total)|(byte|flow|total).*(rx|down)/i)) ?? 0,
+        sessionTx: num(pick(f, /(tx|up|upload).*(byte|flow|total)|(byte|flow|total).*(tx|up)/i)) ?? 0,
+        rxRate: num(pick(f, /(rx|down).*(rate|speed|thrpt)|(rate|speed).*(rx|down)/i)) ?? 0,
+        txRate: num(pick(f, /(tx|up).*(rate|speed|thrpt)|(rate|speed).*(tx|up)/i)) ?? 0,
+        uptime: num(pick(f, /uptime|runtime|run_?time|online_?time/i)) ?? 0,
+        clients: num(pick(f, /(client|sta|device|user).*(num|count)|(num|count).*(client|sta|device|user)/i)),
+        wifi: { ssid24: pick(f, /ssid.*(2|24)|2g.*ssid/i) || "", ssid5: pick(f, /ssid.*5|5g.*ssid/i) || "" },
+        model: pick(f, /model|product|device_?name/i) || "ZLT X17U",
       };
     },
+
     async getDevices() {
-      const r = await get(["station_list", "lan_station_list"]);
-      const map = (list, type) =>
-        (list || []).map((d) => ({
-          name: d.hostname || d.hostName || "Unknown",
-          ip: d.ip_addr || d.ipAddress || "",
-          mac: d.mac_addr || d.macAddress || "",
-          type,
-        }));
-      return [...map(r.station_list, "wifi"), ...map(r.lan_station_list, "lan")];
+      const res = await call(CMDS.devices);
+      const list = Object.values(res).find((v) => Array.isArray(v) && v.length && typeof v[0] === "object") || [];
+      const g = (d, re) => { const k = Object.keys(d).find((x) => re.test(x)); return k ? d[k] : ""; };
+      return list.map((d) => ({
+        name: g(d, /host|name/i) || "Unknown", ip: g(d, /^ip|ipaddr|ip_/i), mac: g(d, /mac/i),
+        type: /lan|eth|wired/i.test(JSON.stringify(g(d, /type|conn|interface/i))) ? "lan" : "wifi",
+      }));
+    },
+
+    // Read-only GET commands; one login, then all responses (secrets hidden).
+    async probe() {
+      const cmds = [80, 104, 113, 133, 205, 207, 208, 218, 222, 223, 224, 225, 337, 355, 402, 1005, 3, 11];
+      const out = { loggedIn: false, results: {} };
+      await login(); out.loggedIn = true;
+      for (const c of cmds) out.results[c] = redact(await call(c).catch((e) => ({ error: e.message })));
+      return out;
+    },
+
+    async snippets(q, ctx = 600, max = 6, file = "app.js") {
+      const text = await (await nfetch(`${base}/js/${file}`)).text();
+      const out = []; let i = -1;
+      while (out.length < max && (i = text.indexOf(q, i + 1)) !== -1) { out.push(text.slice(Math.max(0, i - ctx), i + ctx)); i += ctx; }
+      return { q, file, count: out.length, snippets: out };
     },
   };
 }
