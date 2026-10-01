@@ -46,6 +46,7 @@ http.createServer(async (req, res) => {
     if (url.pathname === "/api/devices") return json(res, 200, { devices: await router.getDevices() });
     if (url.pathname === "/api/diagnose") return json(res, 200, await router.diagnose());
     if (url.pathname === "/api/discover") return json(res, 200, await router.discover());
+    if (url.pathname === "/api/snippets") return json(res, 200, await router.snippets(url.searchParams.get("q") || "http.cgi", +url.searchParams.get("ctx") || 600, +url.searchParams.get("max") || 6));
     if (url.pathname === "/api/raw" && router.raw)
       return json(res, 200, await router.raw((url.searchParams.get("cmd") || "").split(",")));
 

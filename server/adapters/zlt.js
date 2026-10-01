@@ -118,8 +118,24 @@ export function createZlt({ host, password, loginMode = "base64" }) {
     return out;
   }
 
+  // Return code snippets from the router's JS around a search term.
+  async function snippets(q, ctx = 600, max = 6) {
+    const out = [];
+    for (const f of ["js/app.js"]) {
+      const r = await fetch(`${base}/${f}`, { signal: AbortSignal.timeout(TIMEOUT) });
+      const text = await r.text();
+      let i = -1;
+      while (out.length < max && (i = text.indexOf(q, i + 1)) !== -1) {
+        out.push({ file: f, at: i, code: text.slice(Math.max(0, i - ctx), i + ctx) });
+        i += ctx;
+      }
+    }
+    return { q, count: out.length, snippets: out };
+  }
+
   return {
     name: "zlt",
+    snippets,
     diagnose,
     discover,
     raw: (cmds) => get(cmds),
