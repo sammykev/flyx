@@ -11,6 +11,7 @@ const FIELDS = [
   "realtime_time", "sta_count", "SSID1", "SSID2", "hardware_version", "wa_inner_version",
 ];
 
+const TIMEOUT = 8000;
 const num = (v) => (v === undefined || v === "" || isNaN(+v) ? null : +v);
 
 export function createZlt({ host, password, loginMode = "base64" }) {
@@ -31,6 +32,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
       method: "POST",
       headers: headers({ "Content-Type": "application/x-www-form-urlencoded" }),
       body: new URLSearchParams({ isTest: "false", goformId: "LOGIN", password: pw }),
+      signal: AbortSignal.timeout(TIMEOUT),
     });
     const set = res.headers.getSetCookie?.() ?? [];
     if (set.length) cookie = set.map((c) => c.split(";")[0]).join("; ");
@@ -42,7 +44,9 @@ export function createZlt({ host, password, loginMode = "base64" }) {
 
   async function get(cmds, { retry = true } = {}) {
     const url = `${base}/goform/goform_get_cmd_process?isTest=false&multi_data=1&cmd=${cmds.join(",")}`;
-    const res = await fetch(url, { headers: headers() });
+    const res = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT) }).catch((e) => {
+      throw new Error(`cannot reach router at ${host} (${e.name === "TimeoutError" ? "timed out" : e.cause?.code || e.message})`);
+    });
     const text = await res.text();
     let json;
     try { json = JSON.parse(text); } catch { json = null; }
@@ -50,7 +54,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
       await login();
       return get(cmds, { retry: false });
     }
-    if (!json) throw new Error("unexpected router response");
+    if (!json) throw new Error(`router at ${host} did not return goform JSON (HTTP ${res.status}); check host/firmware`);
     return json;
   }
 

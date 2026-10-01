@@ -6,6 +6,7 @@ const store = {
 let plan = { gb: store.get("planGb", 100), resetDay: store.get("resetDay", 1) };
 let state = { status: null, days: [], range: 14 };
 
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (b) => {
   if (b == null) return "—";
   const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
@@ -52,7 +53,7 @@ function render() {
   $("rsrpSmall").textContent = s.rsrp != null ? `RSRP ${s.rsrp} dBm · SINR ${s.sinr ?? "—"} dB` : "";
 
   $("sRx").textContent = fmt(s.sessionRx); $("sTx").textContent = fmt(s.sessionTx);
-  const row = (k, v) => `<div class="row"><span>${k}</span><span class="v">${v ?? "—"}</span></div>`;
+  const row = (k, v) => `<div class="row"><span>${k}</span><span class="v">${esc(v ?? "—")}</span></div>`;
   $("netList").innerHTML = "<h3>Connection</h3>" + [
     ["Status", s.online ? "Connected" : "Disconnected"], ["Operator", s.operator], ["Network type", s.networkType],
     ["Band", s.band], ["RSRP", s.rsrp != null ? s.rsrp + " dBm" : null], ["RSRQ", s.rsrq != null ? s.rsrq + " dB" : null],
@@ -66,7 +67,7 @@ function renderUsage() {
   const max = Math.max(1, ...days.map((d) => d.rx + d.tx));
   $("chart").innerHTML = days.map((d) =>
     `<div class="bar" title="${d.date}"><i class="u" style="height:${d.tx / max * 100}%"></i><i class="d" style="height:${d.rx / max * 100}%"></i></div>`).join("");
-  const tot = cycleUsed(), n = Math.max(1, new Date().getDate() - cycle().start.getDate() + 1 || 1);
+  const tot = cycleUsed();
   $("mTotal").textContent = fmt(tot);
   $("mAvg").textContent = fmt(state.days.slice(-7).reduce((a, d) => a + d.rx + d.tx, 0) / 7);
   $("dayList").innerHTML = "<h3>Daily</h3>" + [...days].reverse().map((d) =>
@@ -77,7 +78,7 @@ async function loadDevices() {
   try {
     const { devices } = await (await fetch("/api/devices")).json();
     $("devList").innerHTML = devices.length ? `<h3>${devices.length} connected</h3>` + devices.map((d) =>
-      `<div class="row dev"><div><b>${d.name}</b><small>${d.ip} · ${d.mac}</small></div><span class="tag">${d.type === "lan" ? "Ethernet" : "Wi-Fi"}</span></div>`).join("")
+      `<div class="row dev"><div><b>${esc(d.name)}</b><small>${esc(d.ip)} · ${esc(d.mac)}</small></div><span class="tag">${d.type === "lan" ? "Ethernet" : "Wi-Fi"}</span></div>`).join("")
       : '<p class="empty">No devices found</p>';
   } catch { $("devList").innerHTML = '<p class="empty">Could not load devices</p>'; }
 }
