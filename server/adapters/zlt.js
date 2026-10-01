@@ -58,8 +58,38 @@ export function createZlt({ host, password, loginMode = "base64" }) {
     return json;
   }
 
+  // Probe the router and report what it says, to debug login/field problems.
+  async function diagnose() {
+    const out = { host, steps: [] };
+    const step = async (name, fn) => {
+      try { out.steps.push({ name, ok: true, result: await fn() }); }
+      catch (e) { out.steps.push({ name, ok: false, error: e.message }); }
+    };
+    const t = (u, o = {}) => fetch(base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
+    await step("open router home page", async () => {
+      const r = await t("/"); const b = await r.text();
+      return { http: r.status, title: (b.match(/<title>(.*?)<\/title>/is) || [])[1] || null, bytes: b.length };
+    });
+    await step("read status without login", async () => {
+      const r = await t("/goform/goform_get_cmd_process?isTest=false&multi_data=1&cmd=network_type,signalbar,loginfo", { headers: headers() });
+      return { http: r.status, body: (await r.text()).slice(0, 300) };
+    });
+    for (const mode of ["base64", "plain"]) {
+      await step(`login (${mode})`, async () => {
+        const pw = mode === "base64" ? Buffer.from(password).toString("base64") : password;
+        const r = await t("/goform/goform_set_cmd_process", {
+          method: "POST", headers: headers({ "Content-Type": "application/x-www-form-urlencoded" }),
+          body: new URLSearchParams({ isTest: "false", goformId: "LOGIN", password: pw }),
+        });
+        return { http: r.status, body: (await r.text()).slice(0, 300) };
+      });
+    }
+    return out;
+  }
+
   return {
     name: "zlt",
+    diagnose,
     raw: (cmds) => get(cmds),
     async getStatus() {
       const r = await get(FIELDS);

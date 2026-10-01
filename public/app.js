@@ -87,8 +87,13 @@ async function refresh() {
   try {
     const [st, us] = await Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/usage?days=30").then((r) => r.json())]);
     state.status = st.status; state.days = us.days;
-    if (st.error && !st.status) $("connText").textContent = "Router unreachable";
-  } catch { state.status = null; }
+    const bn = $("banner");
+    bn.hidden = !st.error;
+    if (st.error) bn.innerHTML = `<b>Can't read the router</b><br>${esc(st.error)}<br><a href="/api/diagnose" target="_blank">Run diagnostic</a>`;
+  } catch (e) {
+    state.status = null; $("banner").hidden = false;
+    $("banner").innerHTML = "<b>Can't reach the Flyx server</b><br>Is it still running on your computer?";
+  }
   render(); renderUsage();
 }
 
