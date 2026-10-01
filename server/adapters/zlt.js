@@ -224,30 +224,20 @@ export function createZlt({ host, password }) {
       });
     },
 
-    // Read-only SMS inbox (cmd 12). Bodies are often UCS2-hex encoded; decode when they look like it.
+    // Read-only SMS inbox (cmd 12). The router returns `sms_list` as comma-separated base64 items,
+    // each decoding to "<id> <flag> <sender> <YYYY/MM/DD> <HH:MM:SS> <text>" (10 per page).
     async getSms(page = 1) {
       const r = await call(12, { subcmd: 0, page_num: page });
-      const list = Object.values(r).find((v) => Array.isArray(v) && (!v.length || typeof v[0] === "object")) || [];
-      const g = (d, re) => { const k = Object.keys(d).find((x) => re.test(x)); return k ? d[k] : ""; };
-      const dec = (t) => {
-        t = String(t ?? "");
-        if (t.length >= 4 && t.length % 4 === 0 && /^[0-9a-f]+$/i.test(t)) {
-          try {
-            const out = Buffer.from(t, "hex").swap16().toString("utf16le");
-            if (!/[\u0000-\u0008\u000e-\u001f\ufffd]/.test(out)) return out;
-          } catch {}
-        }
-        return t;
+      const raw = r.sms_list;
+      const parseItem = (item) => {
+        const t = Buffer.from(item, "base64").toString("utf8");
+        const m = /^(\d+) (\d+) (\S+) (\d{4}\/\d\d\/\d\d) (\d\d:\d\d:\d\d) ([\s\S]*)$/.exec(t);
+        return m ? { id: m[1], unread: m[2] === "0", number: m[3], time: `${m[4].replace(/\//g, "-")} ${m[5]}`, text: m[6] }
+                 : { id: "", unread: false, number: "", time: "", text: t };
       };
-      return {
-        found: Array.isArray(Object.values(r).find((v) => Array.isArray(v))),
-        total: num(r.sms_total ?? r.total ?? r.sms_num ?? r.sms_count), unread: num(r.sms_unread),
-        messages: list.map((d) => ({
-          id: g(d, /^id$|index|^num$/i), number: dec(g(d, /phone|number|from|sender|addr/i)),
-          text: dec(g(d, /content|text|body|msg|message/i)), time: g(d, /time|date/i),
-          unread: /^(0|unread|new)$/i.test(String(g(d, /read|status|state|tag/i))),
-        })),
-      };
+      const list = typeof raw === "string" ? raw.split(",").filter(Boolean).map(parseItem)
+        : Array.isArray(raw) ? raw.map((d) => ({ id: d.id || "", unread: false, number: d.phone || d.number || "", time: d.date || d.time || "", text: d.content || d.text || "" })) : [];
+      return { found: raw !== undefined, total: num(r.sms_total), unread: num(r.sms_unread), page, messages: list };
     },
 
     // Read-only GET commands; one login, then all responses (secrets hidden).

@@ -92,13 +92,21 @@ async function loadDevices() {
   } catch { $("devList").innerHTML = '<p class="empty">Could not load devices</p>'; }
 }
 
-async function loadSms() {
+let sms = { msgs: [], page: 0, total: 0, unread: 0 };
+async function loadSms(more) {
   try {
-    const r = await (await fetch("/api/sms")).json();
+    if (!more) sms = { msgs: [], page: 0, total: 0, unread: 0 };
+    const r = await (await fetch(`/api/sms?page=${sms.page + 1}`)).json();
     if (r.error) throw new Error(r.error);
-    $("smsList").innerHTML = r.messages.length ? `<h3>${r.unread ?? 0} unread${r.total ? " · " + r.total + " total" : ""}</h3>` + r.messages.map((m) =>
-      `<div class="sms ${m.unread ? "new" : ""}"><div class="h"><b>${esc(m.number || "Unknown")}</b><small>${esc(m.time)}</small></div><p>${esc(m.text)}</p></div>`).join("")
-      : `<p class="empty">${r.found ? "No messages" : "Couldn't read the message list. Open /api/call?cmd=12&subcmd=0&page_num=1 to see what the router returns."}</p>`;
+    sms.page = r.page; sms.total = r.total || 0; sms.unread = r.unread || 0;
+    sms.msgs = more ? sms.msgs.concat(r.messages) : r.messages;
+    const head = `<h3>${sms.unread} unread${sms.total ? " · " + sms.total + " total" : ""}</h3>`;
+    const items = sms.msgs.map((m) =>
+      `<div class="sms ${m.unread ? "new" : ""}"><div class="h"><b>${esc(m.number || "Unknown")}</b><small>${esc(m.time)}</small></div><p>${esc(m.text)}</p></div>`).join("");
+    const moreBtn = sms.msgs.length < sms.total && r.messages.length ? '<button class="more" id="smsMore">Load older messages</button>' : "";
+    $("smsList").innerHTML = sms.msgs.length ? head + items + moreBtn
+      : `<p class="empty">${r.found ? "No messages" : "Couldn't read the message list."}</p>`;
+    const mb = $("smsMore"); if (mb) mb.onclick = () => loadSms(true);
   } catch (e) { $("smsList").innerHTML = `<p class="empty">Could not load messages: ${esc(e.message)}</p>`; }
 }
 

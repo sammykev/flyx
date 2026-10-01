@@ -103,3 +103,4 @@ h3{margin:0 0 6px;font-size:13px;color:var(--muted);text-transform:uppercase;let
 .sms p{margin:6px 0 0;color:rgba(245,247,255,.85);white-space:pre-wrap;word-break:break-word}
 .sms.new .h b::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--c1);margin-right:8px}
 .tabbar button{font-size:10.5px}
+.more{display:block;width:100%;margin:12px 0 8px;padding:12px;border-radius:99px;border:1px solid var(--glass-border);background:rgba(255,255,255,.14);color:#fff;font:600 14px inherit;font-family:inherit}
