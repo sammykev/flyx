@@ -9,7 +9,6 @@ A browser can't safely call a router directly (CORS), so a tiny zero-dependency 
 ```bash
 cp config.example.json config.json   # set router host/password
 npm start                            # http://<this-machine>:8080
-npm run mock                         # fake router data, no hardware needed
 ```
 On iPhone (same Wi-Fi): open the URL in Safari → Share → **Add to Home Screen**.
 

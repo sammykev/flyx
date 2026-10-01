@@ -3,8 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createZlt } from "./adapters/zlt.js";
-import { createMock } from "./adapters/mock.js";
-import { record, getDays, seedDemo } from "./history.js";
+import { record, getDays } from "./history.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pub = path.join(root, "public");
@@ -13,10 +12,11 @@ let config = { port: 8080, router: { host: "192.168.0.1", password: "admin" }, p
 try { config = { ...config, ...JSON.parse(fs.readFileSync(path.join(root, "config.json"), "utf8")) }; } catch {}
 const port = process.env.PORT || config.port;
 
-const mock = process.env.FLYX_MOCK === "1";
-const router = mock ? createMock() : createZlt(config.router);
-console.log(`Adapter: ${router.name}`);
-if (mock) seedDemo();
+if (!fs.existsSync(path.join(root, "config.json"))) {
+  console.warn("config.json not found - using defaults (192.168.0.1 / admin). Copy config.example.json to config.json and set your router password.");
+}
+const router = createZlt(config.router);
+console.log(`Router: ${config.router.host}`);
 
 let status = null, error = null, updated = 0;
 async function poll() {
@@ -41,7 +41,7 @@ const json = (res, code, body) => {
 http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   try {
-    if (url.pathname === "/api/status") return json(res, 200, { status, error, updated, mock });
+    if (url.pathname === "/api/status") return json(res, 200, { status, error, updated });
     if (url.pathname === "/api/usage") return json(res, 200, { days: getDays(+url.searchParams.get("days") || 30) });
     if (url.pathname === "/api/devices") return json(res, 200, { devices: await router.getDevices() });
     if (url.pathname === "/api/raw" && router.raw)

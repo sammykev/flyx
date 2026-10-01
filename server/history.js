@@ -44,12 +44,3 @@ setInterval(() => {
   } catch (e) { console.error("history save failed", e.message); }
 }, 30_000).unref();
 
-// Demo data for `npm run mock` so charts aren't empty.
-export function seedDemo() {
-  if (Object.keys(state.days).length) return;
-  for (let i = 29; i >= 1; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i);
-    const base = 1.2 + Math.abs(Math.sin(i * 1.7)) * 4.5;
-    state.days[dayKey(d)] = { rx: base * 1024 ** 3, tx: base * 0.14 * 1024 ** 3 };
-  }
-}
