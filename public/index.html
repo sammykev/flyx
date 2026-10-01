@@ -69,6 +69,11 @@
     <div class="glass list" id="devList"><p class="empty">Loading…</p></div>
   </section>
 
+  <!-- SMS -->
+  <section class="view" id="v-sms">
+    <div class="glass list" id="smsList"><p class="empty">Loading…</p></div>
+  </section>
+
   <!-- NETWORK -->
   <section class="view" id="v-network">
     <div class="glass list" id="netList"></div>
@@ -84,6 +89,7 @@
   <button data-v="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
   <button data-v="usage"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Usage</button>
   <button data-v="devices"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="14" height="10" rx="2"/><path d="M8 18h4M10 14v4M19 8h2v12h-4"/></svg>Devices</button>
+  <button data-v="sms"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>SMS<i class="badge" id="smsBadge" hidden></i></button>
   <button data-v="network"><svg viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1"/></svg>Network</button>
 </nav>
 <script src="app.js"></script>

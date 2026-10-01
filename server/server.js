@@ -46,7 +46,12 @@ http.createServer(async (req, res) => {
     if (url.pathname === "/api/status") return json(res, 200, { status, error, updated });
     if (url.pathname === "/api/usage") return json(res, 200, { days: getDays(+url.searchParams.get("days") || 30) });
     if (url.pathname === "/api/probe") return json(res, 200, await router.probe());
-    if (url.pathname === "/api/call") return json(res, 200, await router.call(+url.searchParams.get("cmd")));
+    if (url.pathname === "/api/call") {
+      const extra = {};
+      for (const [k, v] of url.searchParams) if (k !== "cmd") extra[k] = v !== "" && !isNaN(+v) ? +v : v;
+      return json(res, 200, await router.call(+url.searchParams.get("cmd"), extra)); // always a read-only GET
+    }
+    if (url.pathname === "/api/sms") return json(res, 200, await router.getSms(+url.searchParams.get("page") || 1));
     if (url.pathname === "/api/snippets") return json(res, 200, await router.snippets(url.searchParams.get("q") || "", +url.searchParams.get("ctx") || 600, +url.searchParams.get("max") || 6, url.searchParams.get("file") || "app.js"));
     if (url.pathname === "/api/devices") return json(res, 200, { devices: await router.getDevices() });
 

@@ -93,3 +93,13 @@ h3{margin:0 0 6px;font-size:13px;color:var(--muted);text-transform:uppercase;let
 .banner{padding:14px 18px;margin-bottom:14px;font-size:14px;border-color:rgba(255,69,58,.6)}
 .banner[hidden]{display:none}
 .banner a{color:var(--c1)}
+
+.badge{position:absolute;top:2px;right:calc(50% - 22px);min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--bad);
+  color:#fff;font:700 11px/18px inherit;font-style:normal;text-align:center}
+.badge[hidden]{display:none}
+.sms{padding:14px 0;border-bottom:1px solid rgba(255,255,255,.09)}.sms:last-child{border:0}
+.sms .h{display:flex;justify-content:space-between;gap:10px;font-weight:600}
+.sms .h small{color:var(--muted);font-weight:400;white-space:nowrap}
+.sms p{margin:6px 0 0;color:rgba(245,247,255,.85);white-space:pre-wrap;word-break:break-word}
+.sms.new .h b::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--c1);margin-right:8px}
+.tabbar button{font-size:10.5px}

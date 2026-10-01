@@ -38,6 +38,7 @@ function render() {
   pill.className = "pill " + (s.online ? "ok" : "bad");
   $("connText").textContent = s.online ? "Online" : "Offline";
   $("model").textContent = s.model;
+  const bd = $("smsBadge"); bd.hidden = !s.smsUnread; bd.textContent = s.smsUnread > 99 ? "99+" : s.smsUnread;
 
   const P = s.plan;
   if (P) {
@@ -91,6 +92,16 @@ async function loadDevices() {
   } catch { $("devList").innerHTML = '<p class="empty">Could not load devices</p>'; }
 }
 
+async function loadSms() {
+  try {
+    const r = await (await fetch("/api/sms")).json();
+    if (r.error) throw new Error(r.error);
+    $("smsList").innerHTML = r.messages.length ? `<h3>${r.unread ?? 0} unread${r.total ? " · " + r.total + " total" : ""}</h3>` + r.messages.map((m) =>
+      `<div class="sms ${m.unread ? "new" : ""}"><div class="h"><b>${esc(m.number || "Unknown")}</b><small>${esc(m.time)}</small></div><p>${esc(m.text)}</p></div>`).join("")
+      : `<p class="empty">${r.found ? "No messages" : "Couldn't read the message list. Open /api/call?cmd=12&subcmd=0&page_num=1 to see what the router returns."}</p>`;
+  } catch (e) { $("smsList").innerHTML = `<p class="empty">Could not load messages: ${esc(e.message)}</p>`; }
+}
+
 async function refresh() {
   try {
     const [st, us] = await Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/usage?days=30").then((r) => r.json())]);
@@ -106,13 +117,14 @@ async function refresh() {
 }
 
 // tabs
-const titles = { home: "Home", usage: "Usage", devices: "Devices", network: "Network" };
+const titles = { home: "Home", usage: "Usage", devices: "Devices", sms: "Messages", network: "Network" };
 $("tabs").onclick = (e) => {
   const b = e.target.closest("button"); if (!b) return;
   document.querySelectorAll(".tabbar button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "v-" + b.dataset.v));
   $("title").textContent = titles[b.dataset.v];
   if (b.dataset.v === "devices") loadDevices();
+  if (b.dataset.v === "sms") loadSms();
   if (navigator.vibrate) navigator.vibrate(5);
 };
 $("range").onclick = (e) => {
