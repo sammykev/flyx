@@ -56,6 +56,7 @@ http.createServer(async (req, res) => {
       return json(res, 200, map);
     }
     if (url.pathname === "/api/cmds") return json(res, 200, await router.cmds());
+    if (url.pathname === "/api/apicalls") return json(res, 200, await router.apicalls());
     if (url.pathname === "/api/raw" && router.raw)
       return json(res, 200, await router.raw((url.searchParams.get("cmd") || "").split(",")));
 

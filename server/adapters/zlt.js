@@ -207,8 +207,34 @@ export function createZlt({ host, password, loginMode = "base64" }) {
     return out;
   }
 
+  // Compact list of every API call the web UI defines, plus the login code.
+  async function apicalls() {
+    const get = async (f) => (await nfetch(`${base}/js/${f}`)).text();
+    const app = await get("app.js");
+    const calls = [];
+    for (const m of app.matchAll(/(\w+)\(([^)]*)\)\{(?:var|let|const)\s+\w+=\{([^{}]*?cmd:\d+[^{}]*)\}/g)) {
+      calls.push(`${m[1]}(${m[2]}) -> {${m[3].replace(/sessionId:sessionStorage\.getItem\("sessionId"\)/, "sessionId")}}`);
+    }
+    for (const m of app.matchAll(/(\w+)\((\w*)\)\{return \w+\.cmd=(\d+),\w+\.method="(\w+)"/g)) {
+      calls.push(`${m[1]}(${m[2]}) -> cmd:${m[3]} ${m[4]} (adds fields to arg)`);
+    }
+    const ids = [...new Set([...app.matchAll(/chunk-([0-9a-f]{8})/g)].map((x) => x[1]))];
+    const login = { token: [], loginIndex: [], sessionId: [] };
+    for (const id of ids) {
+      let t; try { t = await get(`chunk-${id}.js`); } catch { continue; }
+      if (!/cmd:100\b/.test(t) || !/sha256/.test(t)) continue;
+      const grab = (re, w, max) => { const r = []; let m; while (r.length < max && (m = re.exec(t))) r.push(t.slice(Math.max(0, m.index - w), m.index + m[0].length + w)); return r; };
+      login.file = `chunk-${id}.js`;
+      login.token = grab(/token/g, 350, 6);
+      login.loginIndex = grab(/loginIndex/g, 700, 2);
+      login.sessionId = grab(/sessionId/g, 250, 4);
+    }
+    return { count: calls.length, calls, login };
+  }
+
   return {
     name: "zlt",
+    apicalls,
     cmds,
     snippets,
     diagnose,
