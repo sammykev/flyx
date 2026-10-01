@@ -259,6 +259,21 @@ export function createZlt({ host, password }) {
       return out;
     },
 
+    // Search every script of the router's web UI for a string (code only, no personal data).
+    async findcode(q, ctx = 500, max = 6) {
+      const get = async (f) => (await nfetch(`${base}/js/${f}`)).text();
+      const app = await get("app.js");
+      const files = ["app.js", ...[...new Set([...app.matchAll(/chunk-([0-9a-f]{8})/g)].map((m) => `chunk-${m[1]}.js`))]];
+      const out = [];
+      for (const f of files) {
+        if (out.length >= max) break;
+        let t; try { t = f === "app.js" ? app : await get(f); } catch { continue; }
+        let i = -1;
+        while (out.length < max && (i = t.indexOf(q, i + 1)) !== -1) { out.push({ file: f, code: t.slice(Math.max(0, i - ctx), i + ctx) }); i += ctx; }
+      }
+      return { q, count: out.length, results: out };
+    },
+
     async snippets(q, ctx = 600, max = 6, file = "app.js") {
       const text = await (await nfetch(`${base}/js/${file}`)).text();
       const out = []; let i = -1;
