@@ -45,6 +45,7 @@ http.createServer(async (req, res) => {
     if (url.pathname === "/api/usage") return json(res, 200, { days: getDays(+url.searchParams.get("days") || 30) });
     if (url.pathname === "/api/devices") return json(res, 200, { devices: await router.getDevices() });
     if (url.pathname === "/api/diagnose") return json(res, 200, await router.diagnose());
+    if (url.pathname === "/api/discover") return json(res, 200, await router.discover());
     if (url.pathname === "/api/raw" && router.raw)
       return json(res, 200, await router.raw((url.searchParams.get("cmd") || "").split(",")));
 

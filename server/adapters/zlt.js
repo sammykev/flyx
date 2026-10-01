@@ -87,9 +87,41 @@ export function createZlt({ host, password, loginMode = "base64" }) {
     return out;
   }
 
+  // Read the router's own web UI and list the API paths its scripts call.
+  async function discover() {
+    const t = async (u, o = {}) => {
+      const r = await fetch(u.startsWith("http") ? u : base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
+      return { status: r.status, type: r.headers.get("content-type"), server: r.headers.get("server"), text: await r.text() };
+    };
+    const out = { host };
+    const home = await t("/");
+    out.home = { status: home.status, server: home.server, html: home.text.slice(0, 1500) };
+    const assets = [...home.text.matchAll(/(?:src|href)\s*=\s*["']([^"']+\.(?:js|json))["']/gi)].map((m) => m[1]);
+    out.assets = [];
+    const found = new Set();
+    for (const a of [...new Set(assets)].slice(0, 12)) {
+      try {
+        const url = a.startsWith("http") ? a : new URL(a, base + "/").href;
+        const r = await t(url);
+        out.assets.push({ url: a, status: r.status, bytes: r.text.length });
+        for (const m of r.text.matchAll(/["'`](\/?(?:cgi-bin|api|goform|ubus|rpc|jsonrpc|action|cmd|data|json|lua)[\w\-./?=&%]*)["'`]/gi)) found.add(m[1]);
+        for (const m of r.text.matchAll(/["'`](\/[\w\-./]*(?:login|status|info|usage|traffic|signal|device|client|session)[\w\-./?=&%]*)["'`]/gi)) found.add(m[1]);
+      } catch (e) { out.assets.push({ url: a, error: e.message }); }
+    }
+    out.apiPathsInScripts = [...found].slice(0, 80);
+    const probes = ["/ubus", "/cgi-bin/luci", "/cgi-bin/", "/api", "/api/status", "/cgi-bin/get_status", "/cgi-bin/status.cgi", "/goform/goform_get_cmd_process", "/jsonrpc", "/rpc", "/data.json", "/status.json", "/cgi-bin/api"];
+    out.probes = {};
+    for (const p of probes) {
+      try { const r = await t(p); out.probes[p] = `${r.status} ${r.type || ""} ${r.text.slice(0, 80).replace(/\s+/g, " ")}`; }
+      catch (e) { out.probes[p] = "error " + e.message; }
+    }
+    return out;
+  }
+
   return {
     name: "zlt",
     diagnose,
+    discover,
     raw: (cmds) => get(cmds),
     async getStatus() {
       const r = await get(FIELDS);
