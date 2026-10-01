@@ -1,4 +1,5 @@
 import http from "node:http";
+import zlib from "node:zlib";
 
 // Lenient fetch-like client. Node's built-in fetch (undici) crashes on this router's
 // non-standard HTTP replies, so use node:http with the tolerant parser instead.
@@ -6,7 +7,7 @@ function nfetch(url, opts = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     let body = opts.body;
-    const headers = { ...(opts.headers || {}), Connection: "close" };
+    const headers = { "Accept-Encoding": "gzip, deflate", ...(opts.headers || {}), Connection: "close" };
     if (body instanceof URLSearchParams) body = body.toString();
     if (body != null) headers["Content-Length"] = Buffer.byteLength(body);
     const req = http.request(
@@ -15,8 +16,16 @@ function nfetch(url, opts = {}) {
       (res) => {
         const chunks = [];
         res.on("data", (c) => chunks.push(c));
+        let finished = false;
         const done = () => {
-          const buf = Buffer.concat(chunks);
+          if (finished) return; finished = true;
+          let buf = Buffer.concat(chunks);
+          const enc = String(res.headers["content-encoding"] || "").toLowerCase();
+          try {
+            if (enc.includes("gzip")) buf = zlib.gunzipSync(buf);
+            else if (enc.includes("deflate")) buf = zlib.inflateSync(buf);
+            else if (enc.includes("br")) buf = zlib.brotliDecompressSync(buf);
+          } catch {}
           resolve({
             status: res.statusCode,
             headers: { get: (k) => res.headers[k.toLowerCase()] ?? null, getSetCookie: () => res.headers["set-cookie"] || [] },
