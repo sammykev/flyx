@@ -1,3 +1,41 @@
+import http from "node:http";
+
+// Lenient fetch-like client. Node's built-in fetch (undici) crashes on this router's
+// non-standard HTTP replies, so use node:http with the tolerant parser instead.
+function nfetch(url, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    let body = opts.body;
+    const headers = { ...(opts.headers || {}), Connection: "close" };
+    if (body instanceof URLSearchParams) body = body.toString();
+    if (body != null) headers["Content-Length"] = Buffer.byteLength(body);
+    const req = http.request(
+      { hostname: u.hostname, port: u.port || 80, path: u.pathname + u.search, method: opts.method || "GET",
+        headers, insecureHTTPParser: true, agent: false },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        const done = () => {
+          const buf = Buffer.concat(chunks);
+          resolve({
+            status: res.statusCode,
+            headers: { get: (k) => res.headers[k.toLowerCase()] ?? null, getSetCookie: () => res.headers["set-cookie"] || [] },
+            text: async () => buf.toString("utf8"),
+            json: async () => JSON.parse(buf.toString("utf8")),
+          });
+        };
+        res.on("end", done);
+        res.on("close", () => { if (!res.complete) done(); });
+        res.on("error", done);
+      }
+    );
+    req.setTimeout(8000, () => { const e = new Error("timeout"); e.name = "TimeoutError"; req.destroy(e); });
+    req.on("error", reject);
+    if (body != null) req.write(body);
+    req.end();
+  });
+}
+
 // Adapter for ZLT/ZTE-style "goform" routers (MTN Broadband 5G ZLT X17U).
 // NOTE: endpoints/field names follow the common goform API and are unverified
 // against a real X17U. If a field is blank, open http://<router>/ in a browser,
@@ -28,7 +66,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
   async function login() {
     if (loginMode === "none") return;
     const pw = loginMode === "base64" ? Buffer.from(password).toString("base64") : password;
-    const res = await fetch(`${base}/goform/goform_set_cmd_process`, {
+    const res = await nfetch(`${base}/goform/goform_set_cmd_process`, {
       method: "POST",
       headers: headers({ "Content-Type": "application/x-www-form-urlencoded" }),
       body: new URLSearchParams({ isTest: "false", goformId: "LOGIN", password: pw }),
@@ -44,7 +82,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
 
   async function get(cmds, { retry = true } = {}) {
     const url = `${base}/goform/goform_get_cmd_process?isTest=false&multi_data=1&cmd=${cmds.join(",")}`;
-    const res = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT) }).catch((e) => {
+    const res = await nfetch(url, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT) }).catch((e) => {
       throw new Error(`cannot reach router at ${host} (${e.name === "TimeoutError" ? "timed out" : e.cause?.code || e.message})`);
     });
     const text = await res.text();
@@ -65,7 +103,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
       try { out.steps.push({ name, ok: true, result: await fn() }); }
       catch (e) { out.steps.push({ name, ok: false, error: e.message }); }
     };
-    const t = (u, o = {}) => fetch(base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
+    const t = (u, o = {}) => nfetch(base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
     await step("open router home page", async () => {
       const r = await t("/"); const b = await r.text();
       return { http: r.status, title: (b.match(/<title>(.*?)<\/title>/is) || [])[1] || null, bytes: b.length };
@@ -90,7 +128,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
   // Read the router's own web UI and list the API paths its scripts call.
   async function discover() {
     const t = async (u, o = {}) => {
-      const r = await fetch(u.startsWith("http") ? u : base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
+      const r = await nfetch(u.startsWith("http") ? u : base + u, { ...o, signal: AbortSignal.timeout(TIMEOUT) });
       return { status: r.status, type: r.headers.get("content-type"), server: r.headers.get("server"), text: await r.text() };
     };
     const out = { host };
@@ -122,7 +160,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
   async function snippets(q, ctx = 600, max = 6) {
     const out = [];
     for (const f of ["js/app.js"]) {
-      const r = await fetch(`${base}/${f}`, { signal: AbortSignal.timeout(TIMEOUT) });
+      const r = await nfetch(`${base}/${f}`, { signal: AbortSignal.timeout(TIMEOUT) });
       const text = await r.text();
       let i = -1;
       while (out.length < max && (i = text.indexOf(q, i + 1)) !== -1) {
@@ -138,7 +176,7 @@ export function createZlt({ host, password, loginMode = "base64" }) {
     "83c5cf2c": "status/wifi24Info", "7b0cb84c": "status/wifi5Info", "fadfabc6": "status/deviceInfo",
     "5bb97221": "connect/info (device list)", "2677da51": "status/index" };
   async function cmds() {
-    const get = async (f) => (await fetch(`${base}/js/${f}`, { signal: AbortSignal.timeout(TIMEOUT) })).text();
+    const get = async (f) => (await nfetch(`${base}/js/${f}`, { signal: AbortSignal.timeout(TIMEOUT) })).text();
     const app = await get("app.js");
     const ids = [...new Set([...app.matchAll(/chunk-([0-9a-f]{8})/g)].map((m) => m[1]))];
     const out = { chunks: ids.length, files: {} };

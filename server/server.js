@@ -15,6 +15,8 @@ const port = process.env.PORT || config.port;
 if (!fs.existsSync(path.join(root, "config.json"))) {
   console.warn("config.json not found - using defaults (192.168.0.1 / admin). Copy config.example.json to config.json and set your router password.");
 }
+process.on("uncaughtException", (e) => { error = `router connection error: ${e.message}`; console.error(e.message); });
+process.on("unhandledRejection", (e) => { error = String(e?.message || e); console.error(error); });
 const router = createZlt(config.router);
 console.log(`Router: ${config.router.host}`);
 
