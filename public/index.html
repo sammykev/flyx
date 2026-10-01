@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flyx">
+<meta name="theme-color" content="#0b1020">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+<title>Flyx</title>
+</head>
+<body>
+<div class="aurora"><i></i><i></i><i></i></div>
+
+<main id="app">
+  <header class="top">
+    <div>
+      <p class="eyebrow" id="model">Router</p>
+      <h1 id="title">Home</h1>
+    </div>
+    <div class="pill" id="conn"><span class="dot"></span><span id="connText">Connecting…</span></div>
+  </header>
+
+  <!-- HOME -->
+  <section class="view active" id="v-home">
+    <div class="glass hero">
+      <div class="ring" id="ring">
+        <svg viewBox="0 0 120 120"><circle class="bg" cx="60" cy="60" r="52"/><circle class="fg" id="ringFg" cx="60" cy="60" r="52"/></svg>
+        <div class="ring-text"><b id="usedBig">—</b><span id="usedOf">of — plan</span></div>
+      </div>
+      <div class="hero-side">
+        <div><span class="k">Remaining</span><b id="remain">—</b></div>
+        <div><span class="k">Resets in</span><b id="resetIn">—</b></div>
+        <div><span class="k">Today</span><b id="todayTotal">—</b></div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="glass stat"><span class="k">↓ Download</span><b id="rx">—</b></div>
+      <div class="glass stat"><span class="k">↑ Upload</span><b id="tx">—</b></div>
+      <div class="glass stat"><span class="k">Network</span><b id="net">—</b><small id="op"></small></div>
+      <div class="glass stat"><span class="k">Signal</span><b id="bars">—</b><small id="rsrpSmall"></small></div>
+    </div>
+  </section>
+
+  <!-- USAGE -->
+  <section class="view" id="v-usage">
+    <div class="glass">
+      <div class="seg" id="range"><button data-d="7">7D</button><button data-d="14" class="on">14D</button><button data-d="30">30D</button></div>
+      <div id="chart" class="chart"></div>
+      <div class="legend"><span><i class="c1"></i>Download</span><span><i class="c2"></i>Upload</span></div>
+    </div>
+    <div class="grid2">
+      <div class="glass stat"><span class="k">This month</span><b id="mTotal">—</b></div>
+      <div class="glass stat"><span class="k">Avg / day</span><b id="mAvg">—</b></div>
+      <div class="glass stat"><span class="k">Session ↓</span><b id="sRx">—</b></div>
+      <div class="glass stat"><span class="k">Session ↑</span><b id="sTx">—</b></div>
+    </div>
+    <div class="glass list" id="dayList"></div>
+  </section>
+
+  <!-- DEVICES -->
+  <section class="view" id="v-devices">
+    <div class="glass list" id="devList"><p class="empty">Loading…</p></div>
+  </section>
+
+  <!-- NETWORK -->
+  <section class="view" id="v-network">
+    <div class="glass list" id="netList"></div>
+    <div class="glass list">
+      <h3>Plan</h3>
+      <label class="row">Plan size (GB)<input id="planGb" type="number" inputmode="decimal" min="1"></label>
+      <label class="row">Resets on day<input id="resetDay" type="number" inputmode="numeric" min="1" max="28"></label>
+    </div>
+  </section>
+</main>
+
+<nav class="tabbar glass" id="tabs">
+  <button data-v="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+  <button data-v="usage"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Usage</button>
+  <button data-v="devices"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="14" height="10" rx="2"/><path d="M8 18h4M10 14v4M19 8h2v12h-4"/></svg>Devices</button>
+  <button data-v="network"><svg viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1"/></svg>Network</button>
+</nav>
+<script src="app.js"></script>
+</body>
+</html>
