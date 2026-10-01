@@ -133,8 +133,36 @@ export function createZlt({ host, password, loginMode = "base64" }) {
     return { q, count: out.length, snippets: out };
   }
 
+  // Crawl the router's lazy-loaded page scripts and list their cmd values.
+  const PAGES = { "7b0cd930": "status/home", "05bb347a": "status/wanInfo", "118affda": "status/DHCPInfo",
+    "83c5cf2c": "status/wifi24Info", "7b0cb84c": "status/wifi5Info", "fadfabc6": "status/deviceInfo",
+    "5bb97221": "connect/info (device list)", "2677da51": "status/index" };
+  async function cmds() {
+    const get = async (f) => (await fetch(`${base}/js/${f}`, { signal: AbortSignal.timeout(TIMEOUT) })).text();
+    const app = await get("app.js");
+    const ids = [...new Set([...app.matchAll(/chunk-([0-9a-f]{8})/g)].map((m) => m[1]))];
+    const out = { chunks: ids.length, files: {} };
+    const grab = (text, re, w, max) => {
+      const r = []; let m;
+      while (r.length < max && (m = re.exec(text))) r.push(text.slice(Math.max(0, m.index - w), m.index + m[0].length + w));
+      return r;
+    };
+    out.files["app.js"] = {
+      cmd: grab(app, /cmd["']?\s*:\s*[\w.]+/g, 90, 40),
+      password: grab(app, /password/gi, 160, 6),
+    };
+    for (const id of ids) {
+      let text; try { text = await get(`chunk-${id}.js`); } catch { continue; }
+      const c = grab(text, /cmd["']?\s*:\s*[\w.]+/g, 90, 25);
+      const pw = /password/i.test(text) ? grab(text, /password/gi, 160, 3) : [];
+      if (PAGES[id] || pw.length) out.files[PAGES[id] || `chunk-${id}`] = { cmd: c, password: pw };
+    }
+    return out;
+  }
+
   return {
     name: "zlt",
+    cmds,
     snippets,
     diagnose,
     discover,

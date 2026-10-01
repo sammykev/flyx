@@ -53,6 +53,7 @@ http.createServer(async (req, res) => {
       for (const t of terms) map[t] = (await router.snippets(t, 350, 3)).snippets.map((x) => x.code);
       return json(res, 200, map);
     }
+    if (url.pathname === "/api/cmds") return json(res, 200, await router.cmds());
     if (url.pathname === "/api/raw" && router.raw)
       return json(res, 200, await router.raw((url.searchParams.get("cmd") || "").split(",")));
 
